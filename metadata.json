@@ -1,6 +1,0 @@
-{
-  "name": "Connecteo Learning",
-  "description": "Plateforme LMS de formation et de développement des compétences Connecteo Learning.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
