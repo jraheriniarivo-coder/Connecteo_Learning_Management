@@ -1,4 +1,12 @@
-import type { DashboardPayload, Lang, Role, UserProfile } from './types.ts';
+import type {
+  BulkImportResult,
+  BulkImportUserRow,
+  CreateCoursePayload,
+  DashboardPayload,
+  Lang,
+  Role,
+  UserProfile,
+} from './types.ts';
 
 async function parseJson<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
@@ -68,14 +76,7 @@ export async function fetchDashboard(token: string): Promise<DashboardPayload> {
 
 export async function createCourseApi(
   token: string,
-  payload: {
-    titleFr: string;
-    titleEn: string;
-    categoryFr: string;
-    duration: string;
-    skillId: string;
-    levelTitles: string[];
-  }
+  payload: CreateCoursePayload
 ): Promise<void> {
   const res = await fetch('/api/courses', {
     method: 'POST',
@@ -125,6 +126,21 @@ export async function createUserApi(
   payload: { name: string; email: string; password: string; role: Role }
 ): Promise<{ user: UserProfile }> {
   const res = await fetch('/api/users', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseJson(res);
+}
+
+export async function bulkImportUsersApi(
+  token: string,
+  payload: { users: BulkImportUserRow[]; defaultPassword: string }
+): Promise<BulkImportResult> {
+  const res = await fetch('/api/users/import', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

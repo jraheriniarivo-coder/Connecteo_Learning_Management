@@ -5,8 +5,10 @@ import type {
   Assignment,
   AssignmentStatus,
   BilingualText,
+  BulkImportResult,
   Course,
   CourseLevel,
+  InteractiveBlockType,
   MonthlyPoint,
   NotificationItem,
   Role,
@@ -18,6 +20,7 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
 const VALID_ROLES: Role[] = ['management', 'trainer', 'manager', 'staff', 'admin'];
+const VALID_BLOCK_TYPES: InteractiveBlockType[] = ['narrative', 'flashcards', 'steps'];
 const COURSE_IMAGES = [
   '/src/assets/images/course_intellectual_agility_1795592939066.jpg',
   '/src/assets/images/course_customer_excellence_1795592938902.jpg',
@@ -53,6 +56,7 @@ interface StoredCourse {
   skillId: string;
   imageUrl: string;
   accentTheme: 'teal' | 'blue' | 'orange';
+  formatLabel?: string;
   levels: CourseLevel[];
 }
 
@@ -103,6 +107,22 @@ function sanitizeText(value: unknown, maxLength: number): string {
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 120;
+}
+
+function isSafeImageUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^\/src\/assets\/images\/[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (
+    trimmed.length <= 2_800_000 &&
+    /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(trimmed)
+  ) {
+    return trimmed;
+  }
+  return undefined;
 }
 
 function csvCell(value: unknown): string {
@@ -156,7 +176,7 @@ function defaultTitleForRole(role: Role): BilingualText {
 
 export function createApiApp() {
   const app = express();
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '6mb' }));
 
   const users = new Map<string, StoredUser>();
   const revokedSessions = new Set<string>();
@@ -209,6 +229,7 @@ export function createApiApp() {
       skillId: 'intellectual-agility',
       imageUrl: COURSE_IMAGES[0],
       accentTheme: 'teal',
+      formatLabel: 'Articulate 360',
       levels: [
         {
           num: 1,
@@ -225,6 +246,28 @@ export function createApiApp() {
             en: 'An enterprise client calls about an undocumented cross-channel issue. How do you prioritize facts before acting?',
           },
           durationMinutes: 30,
+          imageUrl: COURSE_IMAGES[0],
+          blockType: 'flashcards',
+          takeaway: {
+            fr: 'Toujours distinguer les faits vérifiés des suppositions avant de proposer un plan d’action.',
+            en: 'Always separate verified facts from assumptions before proposing an action plan.',
+          },
+          flashcards: [
+            {
+              front: { fr: 'Réflexe 1 · Cadrage rapide', en: 'Reflex 1 · Rapid framing' },
+              back: {
+                fr: 'Reformuler la situation en 1 phrase et faire valider par le client.',
+                en: 'Rephrase the situation in 1 sentence and confirm with the customer.',
+              },
+            },
+            {
+              front: { fr: 'Réflexe 2 · Tri des signaux', en: 'Reflex 2 · Signal triage' },
+              back: {
+                fr: 'Isoler impact métier, urgence réelle et canal d’origine.',
+                en: 'Isolate business impact, real urgency, and source channel.',
+              },
+            },
+          ],
           quiz: [
             {
               id: 'q1-1',
@@ -269,6 +312,35 @@ export function createApiApp() {
             en: 'A new commercial policy goes live the same morning while a customer expects an immediate resolution.',
           },
           durationMinutes: 30,
+          imageUrl: COURSE_IMAGES[1],
+          blockType: 'steps',
+          takeaway: {
+            fr: 'Expliquer le bénéfice client de la nouvelle procédure avant d’en détailler les modalités.',
+            en: 'Explain the customer benefit of the new policy before detailing steps.',
+          },
+          steps: [
+            {
+              title: { fr: '1. Accuser réception', en: '1. Acknowledge' },
+              detail: {
+                fr: 'Valider l’attente immédiate du client sans minimiser la contrainte.',
+                en: 'Validate the customer’s immediate expectation without minimizing friction.',
+              },
+            },
+            {
+              title: { fr: '2. Présenter l’alternative', en: '2. Present option' },
+              detail: {
+                fr: 'Exposer l’option active la plus avantageuse avec un vocabulaire positif.',
+                en: 'Present the strongest available option using positive phrasing.',
+              },
+            },
+            {
+              title: { fr: '3. Tracer par écrit', en: '3. Confirm in writing' },
+              detail: {
+                fr: 'Envoyer un récapitulatif daté pour verrouiller la confiance.',
+                en: 'Send a timestamped summary to lock in trust.',
+              },
+            },
+          ],
           quiz: [
             {
               id: 'q2-1',
@@ -397,6 +469,7 @@ export function createApiApp() {
       skillId: 'customer-relations',
       imageUrl: COURSE_IMAGES[1],
       accentTheme: 'blue',
+      formatLabel: 'Articulate 360',
       levels: [
         {
           num: 1,
@@ -410,6 +483,35 @@ export function createApiApp() {
             en: 'A customer expresses frustration right as the call starts. Which grounding phrase works best?',
           },
           durationMinutes: 25,
+          imageUrl: COURSE_IMAGES[1],
+          blockType: 'steps',
+          takeaway: {
+            fr: 'Une écoute active sans interruption réduit de moitié la durée totale de résolution.',
+            en: 'Active listening without interrupting cuts total resolution time in half.',
+          },
+          steps: [
+            {
+              title: { fr: '1. Voix posée & accueil', en: '1. Warm greeting' },
+              detail: {
+                fr: 'Sourire audible, prénom du conseiller et disponibilité immédiate.',
+                en: 'Audible warmth, advisor name, and immediate readiness.',
+              },
+            },
+            {
+              title: { fr: '2. Écoute sans coupure', en: '2. Uninterrupted listening' },
+              detail: {
+                fr: 'Laisser le client vider son contexte pendant les 20 premières secondes.',
+                en: 'Let the customer share context uninterrupted for the first 20 seconds.',
+              },
+            },
+            {
+              title: { fr: '3. Reformulation miroir', en: '3. Mirror rephrasing' },
+              detail: {
+                fr: 'Confirmer le ressenti et l’objectif concret avant de consulter le dossier.',
+                en: 'Confirm emotion and concrete goal before checking the record.',
+              },
+            },
+          ],
           quiz: [
             {
               id: 'q2-1-1',
@@ -509,6 +611,7 @@ export function createApiApp() {
       skillId: 'data-security',
       imageUrl: COURSE_IMAGES[2],
       accentTheme: 'orange',
+      formatLabel: 'Articulate 360',
       levels: [
         {
           num: 1,
@@ -522,6 +625,28 @@ export function createApiApp() {
             en: 'You leave your desk for 3 minutes in an open office. What habit applies?',
           },
           durationMinutes: 20,
+          imageUrl: COURSE_IMAGES[2],
+          blockType: 'flashcards',
+          takeaway: {
+            fr: 'Win+L (ou Ctrl+Cmd+Q) doit devenir un automatisme dès que vous quittez votre écran.',
+            en: 'Locking your screen should be automatic every single time you step away.',
+          },
+          flashcards: [
+            {
+              front: { fr: 'Règle Poste Clair', en: 'Clean Desk Rule' },
+              back: {
+                fr: 'Aucune donnée client imprimée ou mot de passe visible sur le bureau.',
+                en: 'No printed customer records or passwords left visible on the desk.',
+              },
+            },
+            {
+              front: { fr: 'Mots de passe uniques', en: 'Unique passwords' },
+              back: {
+                fr: '12+ caractères uniques par outil, gérés dans le coffre d’équipe.',
+                en: '12+ unique characters per tool stored in the team password vault.',
+              },
+            },
+          ],
           quiz: [
             {
               id: 'q3-1-1',
@@ -1025,64 +1150,201 @@ export function createApiApp() {
     const categoryEn = sanitizeText(req.body?.categoryEn, 40) || categoryFr;
     const duration = sanitizeText(req.body?.duration, 40) || '4 Modules · 1h30';
     const skillId = sanitizeText(req.body?.skillId, 60) || 'intellectual-agility';
+    const formatLabel = sanitizeText(req.body?.formatLabel, 40) || 'Articulate 360';
 
     if (titleFr.length < 3) {
       res.status(400).json({ error: 'Le titre du cours doit contenir au moins 3 caractères.' });
       return;
     }
 
-    const levelTitles: string[] = Array.isArray(req.body?.levelTitles)
-      ? req.body.levelTitles.map((l: unknown) => sanitizeText(l, 120)).filter(Boolean)
-      : [];
-
-    const defaultLevels: CourseLevel[] = [1, 2, 3, 4].map((num) => {
-      const customLabel = levelTitles[num - 1];
-      return {
-        num,
-        title: {
-          fr: customLabel ? `Niveau ${num} : ${customLabel}` : `Niveau ${num} : Maîtrise opérationnelle ${num}`,
-          en: customLabel ? `Level ${num}: ${customLabel}` : `Level ${num}: Operational mastery ${num}`,
-        },
-        summary: {
-          fr: `Module pratique ${num} pour développer vos compétences sur « ${titleFr} ».`,
-          en: `Practical module ${num} to develop your skills in "${titleEn}".`,
-        },
-        scenario: {
-          fr: `Cas pratique Connecteo appliqué au niveau ${num} de « ${titleFr} ».`,
-          en: `Connecteo field scenario applied to level ${num} of "${titleEn}".`,
-        },
-        durationMinutes: 25,
-        quiz: [
-          {
-            id: `custom-${nextCourseId}-${num}-1`,
-            question: {
-              fr: `Quel principe clé devez-vous appliquer dans le niveau ${num} ?`,
-              en: `Which key principle should you apply in level ${num}?`,
-            },
-            options: [
-              { fr: 'Analyser le besoin client puis agir avec méthode', en: 'Analyze customer need then act methodically' },
-              { fr: 'Ignorer les retours terrain', en: 'Ignore field feedback' },
-              { fr: 'Appliquer une réponse non vérifiée', en: 'Apply an unverified response' },
-            ],
-            correctIndex: 0,
-          },
-        ],
-      };
-    });
-
     const themes: Array<'teal' | 'blue' | 'orange'> = ['teal', 'blue', 'orange'];
     const idx = (nextCourseId - 1) % COURSE_IMAGES.length;
+    const safeCoverUrl = isSafeImageUrl(req.body?.imageUrl) ?? COURSE_IMAGES[idx];
+
+    const rawModules = Array.isArray(req.body?.modules) ? req.body.modules.slice(0, 4) : [];
+    const courseId = nextCourseId++;
+
+    const buildFallbackLevel = (num: number, customTitle?: string): CourseLevel => ({
+      num,
+      title: {
+        fr: customTitle || `Module ${num} : Maîtrise opérationnelle ${num}`,
+        en: customTitle || `Module ${num}: Operational mastery ${num}`,
+      },
+      summary: {
+        fr: `Module interactif ${num} pour développer vos compétences sur « ${titleFr} ».`,
+        en: `Interactive module ${num} to build your skills in "${titleEn}".`,
+      },
+      scenario: {
+        fr: `Cas pratique Connecteo appliqué au module ${num} de « ${titleFr} ».`,
+        en: `Connecteo field scenario applied to module ${num} of "${titleEn}".`,
+      },
+      durationMinutes: 25,
+      imageUrl: safeCoverUrl,
+      blockType: num % 2 === 1 ? 'flashcards' : 'steps',
+      takeaway: {
+        fr: `Retenez la démarche structurée du module ${num} avant d’agir auprès du client.`,
+        en: `Remember the structured approach from module ${num} before acting with the customer.`,
+      },
+      flashcards: [
+        {
+          front: { fr: 'Réflexe terrain', en: 'Field reflex' },
+          back: {
+            fr: `Appliquer les principes clés de « ${titleFr} » dès l’accueil.`,
+            en: `Apply key principles from "${titleEn}" right from greeting.`,
+          },
+        },
+        {
+          front: { fr: 'Point de contrôle', en: 'Checkpoint' },
+          back: {
+            fr: 'Valider la compréhension mutuelle avant de conclure.',
+            en: 'Confirm mutual understanding before closing.',
+          },
+        },
+      ],
+      steps: [
+        {
+          title: { fr: '1. Observer', en: '1. Observe' },
+          detail: { fr: 'Identifier les faits vérifiés sans a priori.', en: 'Identify verified facts objectively.' },
+        },
+        {
+          title: { fr: '2. Ajuster', en: '2. Adapt' },
+          detail: { fr: 'Choisir la réponse la plus adaptée au profil client.', en: 'Select the best response for the customer.' },
+        },
+        {
+          title: { fr: '3. Capitaliser', en: '3. Capitalize' },
+          detail: { fr: 'Tracer l’issue et partager les retours clés.', en: 'Log outcome and share key insights.' },
+        },
+      ],
+      quiz: [
+        {
+          id: `custom-${courseId}-${num}-1`,
+          question: {
+            fr: `Quel principe clé devez-vous appliquer dans le module ${num} ?`,
+            en: `Which key principle should you apply in module ${num}?`,
+          },
+          options: [
+            { fr: 'Analyser le besoin client puis agir avec méthode', en: 'Analyze customer need then act methodically' },
+            { fr: 'Ignorer les retours terrain', en: 'Ignore field feedback' },
+            { fr: 'Appliquer une réponse non vérifiée', en: 'Apply an unverified response' },
+          ],
+          correctIndex: 0,
+        },
+      ],
+    });
+
+    let levels: CourseLevel[];
+    if (rawModules.length > 0) {
+      levels = rawModules.map((mod: Record<string, unknown>, i: number) => {
+        const num = i + 1;
+        const modTitle = sanitizeText(mod?.title, 120) || `Module ${num} : Séquence interactive`;
+        const modSummary =
+          sanitizeText(mod?.summary, 500) ||
+          `Séquence interactive ${num} du parcours « ${titleFr} ».`;
+        const modScenario =
+          sanitizeText(mod?.scenario, 500) ||
+          `Mise en situation Connecteo appliquée au module ${num}.`;
+        const modTakeaway = sanitizeText(mod?.takeaway, 320);
+        const modImageUrl = isSafeImageUrl(mod?.imageUrl) ?? safeCoverUrl;
+        const rawBlock = mod?.blockType as InteractiveBlockType;
+        const blockType: InteractiveBlockType = VALID_BLOCK_TYPES.includes(rawBlock)
+          ? rawBlock
+          : 'narrative';
+
+        const rawFlashcards = Array.isArray(mod?.flashcards) ? mod.flashcards.slice(0, 4) : [];
+        const flashcards = rawFlashcards
+          .map((fc: Record<string, unknown>) => {
+            const front = sanitizeText(fc?.front, 120);
+            const back = sanitizeText(fc?.back, 260);
+            if (!front && !back) return null;
+            return {
+              front: { fr: front || 'Notion clé', en: front || 'Key concept' },
+              back: { fr: back || modSummary, en: back || modSummary },
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null);
+
+        const rawSteps = Array.isArray(mod?.steps) ? mod.steps.slice(0, 5) : [];
+        const steps = rawSteps
+          .map((st: Record<string, unknown>, stIdx: number) => {
+            const stTitle = sanitizeText(st?.title, 100);
+            const detail = sanitizeText(st?.detail, 260);
+            if (!stTitle && !detail) return null;
+            return {
+              title: { fr: stTitle || `Étape ${stIdx + 1}`, en: stTitle || `Step ${stIdx + 1}` },
+              detail: { fr: detail || modSummary, en: detail || modSummary },
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null);
+
+        const qText =
+          sanitizeText(mod?.quizQuestion, 240) ||
+          `Quel réflexe prioriser dans « ${modTitle} » ?`;
+        const rawOptions = Array.isArray(mod?.quizOptions)
+          ? mod.quizOptions.map((o: unknown) => sanitizeText(o, 180)).filter(Boolean).slice(0, 4)
+          : [];
+        const optionsText =
+          rawOptions.length >= 2
+            ? rawOptions
+            : [
+                'Appliquer la méthode structurée Connecteo et vérifier le besoin client',
+                'Traiter la demande sans vérification préalable',
+                'Ignorer les étapes de suivi',
+              ];
+        const rawCorrect = Number(mod?.correctIndex);
+        const correctIndex =
+          Number.isInteger(rawCorrect) && rawCorrect >= 0 && rawCorrect < optionsText.length
+            ? rawCorrect
+            : 0;
+
+        return {
+          num,
+          title: { fr: modTitle, en: modTitle },
+          summary: { fr: modSummary, en: modSummary },
+          scenario: { fr: modScenario, en: modScenario },
+          durationMinutes: 25,
+          imageUrl: modImageUrl,
+          blockType,
+          takeaway: modTakeaway ? { fr: modTakeaway, en: modTakeaway } : undefined,
+          flashcards:
+            flashcards.length > 0
+              ? flashcards
+              : blockType === 'flashcards'
+                ? buildFallbackLevel(num, modTitle).flashcards
+                : undefined,
+          steps:
+            steps.length > 0
+              ? steps
+              : blockType === 'steps'
+                ? buildFallbackLevel(num, modTitle).steps
+                : undefined,
+          quiz: [
+            {
+              id: `custom-${courseId}-${num}-1`,
+              question: { fr: qText, en: qText },
+              options: optionsText.map((txt: string) => ({ fr: txt, en: txt })),
+              correctIndex,
+            },
+          ],
+        };
+      });
+    } else {
+      const levelTitles: string[] = Array.isArray(req.body?.levelTitles)
+        ? req.body.levelTitles.map((l: unknown) => sanitizeText(l, 120)).filter(Boolean)
+        : [];
+      levels = [1, 2, 3, 4].map((num) => buildFallbackLevel(num, levelTitles[num - 1]));
+    }
 
     const newCourse: StoredCourse = {
-      id: nextCourseId++,
+      id: courseId,
       title: { fr: titleFr, en: titleEn },
       category: { fr: categoryFr, en: categoryEn },
       duration: { fr: duration, en: duration },
       owner: req.authUser!.name,
       skillId,
-      imageUrl: COURSE_IMAGES[idx],
+      imageUrl: safeCoverUrl,
       accentTheme: themes[idx],
-      levels: defaultLevels,
+      formatLabel,
+      levels,
     };
 
     courses.push(newCourse);
@@ -1090,8 +1352,8 @@ export function createApiApp() {
     list.unshift({
       id: `notif-course-${newCourse.id}-${Date.now()}`,
       message: {
-        fr: `Nouveau cours publié : « ${titleFr} ».`,
-        en: `New course published: "${titleEn}".`,
+        fr: `Nouveau parcours Articulate 360 publié : « ${titleFr} ».`,
+        en: `New Articulate 360 course published: "${titleEn}".`,
       },
       createdAt: new Date().toISOString(),
       read: false,
@@ -1259,6 +1521,78 @@ export function createApiApp() {
     users.set(userId, created);
     ensureUserSeedState(userId);
     res.status(201).json({ user: publicUser(created) });
+  });
+
+  app.post('/api/users/import', requireAuth, requireRole(['admin', 'management']), (req: AuthedRequest, res) => {
+    const rawUsers = Array.isArray(req.body?.users) ? req.body.users : [];
+    const defaultPassword = typeof req.body?.defaultPassword === 'string' ? req.body.defaultPassword : '';
+
+    if (rawUsers.length === 0 || rawUsers.length > 200) {
+      res.status(400).json({ error: 'Fournissez entre 1 et 200 utilisateurs à importer.' });
+      return;
+    }
+
+    const existingEmails = new Set(Array.from(users.values()).map((u) => u.email.toLowerCase()));
+    let importedCount = 0;
+    let skippedCount = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < rawUsers.length; i += 1) {
+      const row = rawUsers[i] as Record<string, unknown>;
+      const name = sanitizeText(row?.name, 80);
+      const email = sanitizeText(row?.email, 120).toLowerCase();
+      const role = row?.role as Role;
+      const rowPassword = typeof row?.password === 'string' && row.password.length >= 6
+        ? row.password
+        : defaultPassword;
+
+      if (name.length < 2 || !isValidEmail(email) || !VALID_ROLES.includes(role)) {
+        errors.push(`Ligne ${i + 1} ignorée (${email || name || 'invalide'}).`);
+        continue;
+      }
+
+      if (rowPassword.length < 6) {
+        res.status(400).json({ error: 'Un mot de passe initial d’au moins 6 caractères est requis pour l’import.' });
+        return;
+      }
+
+      if (existingEmails.has(email)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const userId = crypto.randomUUID();
+      const created: StoredUser = {
+        id: userId,
+        name,
+        email,
+        initials: computeInitials(name),
+        role,
+        title: defaultTitleForRole(role),
+        passwordHash: hashPassword(rowPassword),
+      };
+      users.set(userId, created);
+      existingEmails.add(email);
+      ensureUserSeedState(userId);
+      importedCount += 1;
+    }
+
+    if (importedCount > 0) {
+      const list = notificationsByUser.get(req.authUser!.id) ?? [];
+      list.unshift({
+        id: `notif-import-${Date.now()}`,
+        message: {
+          fr: `Import massif terminé : ${importedCount} utilisateur(s) ajouté(s).`,
+          en: `Bulk import completed: ${importedCount} user(s) added.`,
+        },
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+      notificationsByUser.set(req.authUser!.id, list.slice(0, 20));
+    }
+
+    const result: BulkImportResult = { importedCount, skippedCount, errors };
+    res.status(201).json(result);
   });
 
   app.patch('/api/users/:id/role', requireAuth, requireRole(['admin', 'management']), (req: AuthedRequest, res) => {

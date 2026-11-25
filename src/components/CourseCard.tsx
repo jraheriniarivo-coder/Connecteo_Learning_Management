@@ -54,10 +54,16 @@ export const CourseCard: React.FC<CourseCardProps> = ({ lang, course, onOpen }) 
       </div>
 
       <div className="p-4 flex-1 flex flex-col">
-        <div className="text-[11px] font-medium text-[#64767e] flex items-center gap-1.5 mb-1.5">
+        <div className="text-[11px] font-medium text-[#64767e] flex items-center gap-1.5 mb-1.5 truncate">
           <span>{course.category[lang]}</span>
           <span aria-hidden="true">·</span>
           <span>{course.duration[lang]}</span>
+          {course.formatLabel && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="text-[#087d7a] font-semibold">{course.formatLabel}</span>
+            </>
+          )}
         </div>
 
         <h3 className="text-sm font-bold text-[#172b36] leading-snug mb-1 line-clamp-2 min-h-[2.5rem]">

@@ -1,8 +1,28 @@
 import React, { useState } from 'react';
-import { Download, Plus, Search, ShieldCheck, UserPlus } from 'lucide-react';
-import { createAssignmentApi, createUserApi, updateUserRoleApi } from '../api.ts';
+import {
+  Download,
+  FileSpreadsheet,
+  Plus,
+  Search,
+  ShieldCheck,
+  Upload,
+  UserPlus,
+  Users,
+} from 'lucide-react';
+import {
+  bulkImportUsersApi,
+  createAssignmentApi,
+  createUserApi,
+  updateUserRoleApi,
+} from '../api.ts';
 import { roleLabels, t } from '../i18n.ts';
-import type { DashboardPayload, Lang, Role } from '../types.ts';
+import type {
+  BulkImportResult,
+  BulkImportUserRow,
+  DashboardPayload,
+  Lang,
+  Role,
+} from '../types.ts';
 import { CourseCard } from './CourseCard.tsx';
 
 interface SecondaryViewProps {
@@ -424,6 +444,71 @@ export const ReportsView: React.FC<SecondaryViewProps> = ({ lang, data, onExport
   );
 };
 
+interface DraftImportRow extends BulkImportUserRow {
+  selected: boolean;
+}
+
+const PRESET_ROSTER: BulkImportUserRow[] = [
+  { name: 'Claire Martin', email: 'claire.martin@connecteo.fr', role: 'trainer' },
+  { name: 'Karim Benali', email: 'karim.benali@connecteo.fr', role: 'manager' },
+  { name: 'Sophie Laurent', email: 'sophie.laurent@connecteo.fr', role: 'management' },
+  { name: 'Lucas Moreau', email: 'lucas.moreau@connecteo.fr', role: 'staff' },
+  { name: 'Emma Petit', email: 'emma.petit@connecteo.fr', role: 'staff' },
+];
+
+function normalizeImportedRole(raw: string): Role {
+  const value = raw.trim().toLowerCase();
+  if (['formateur', 'trainer', 'formatrice'].includes(value)) return 'trainer';
+  if (['manager', 'chef d\'équipe', 'team lead'].includes(value)) return 'manager';
+  if (['management', 'direction', 'responsable'].includes(value)) return 'management';
+  if (['admin', 'administrateur', 'administrator'].includes(value)) return 'admin';
+  return 'staff';
+}
+
+function parseUsersFileText(content: string): DraftImportRow[] {
+  const cleaned = content.replace(/^\uFEFF/, '');
+  const lines = cleaned
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const first = lines[0];
+  const delimiter = first.includes(';') ? ';' : first.includes('\t') ? '\t' : ',';
+
+  const rows: DraftImportRow[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const cols = lines[i]
+      .split(delimiter)
+      .map((cell) => cell.trim().replace(/^["']|["']$/g, ''));
+    if (cols.length < 2) continue;
+
+    const col0Lower = cols[0].toLowerCase();
+    const col1Lower = cols[1].toLowerCase();
+    if (
+      i === 0 &&
+      (col0Lower.includes('nom') || col0Lower === 'name' || col1Lower === 'email')
+    ) {
+      continue;
+    }
+
+    const name = cols[0];
+    const email = cols[1].toLowerCase();
+    const role = normalizeImportedRole(cols[2] ?? 'apprenant');
+    const password = cols[3] && cols[3].length >= 6 ? cols[3] : undefined;
+    if (!name || !email.includes('@')) continue;
+
+    rows.push({
+      selected: true,
+      name,
+      email,
+      role,
+      password,
+    });
+  }
+  return rows;
+}
+
 export const SettingsView: React.FC<SecondaryViewProps> = ({
   lang,
   token,
@@ -438,6 +523,11 @@ export const SettingsView: React.FC<SecondaryViewProps> = ({
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('staff');
   const [creating, setCreating] = useState(false);
+
+  const [importRows, setImportRows] = useState<DraftImportRow[]>([]);
+  const [defaultImportPassword, setDefaultImportPassword] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<BulkImportResult | null>(null);
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,6 +553,117 @@ export const SettingsView: React.FC<SecondaryViewProps> = ({
       await onRefresh();
     } catch (err) {
       onToast(err instanceof Error ? err.message : 'Erreur.');
+    }
+  };
+
+  const handleLoadPresetRoster = () => {
+    setImportRows(PRESET_ROSTER.map((u) => ({ ...u, selected: true })));
+    setImportSummary(null);
+    onToast(
+      lang === 'fr'
+        ? 'Liste pré-établie Connecteo chargée. Définissez un mot de passe initial pour importer.'
+        : 'Pre-built Connecteo roster loaded. Set an initial password to import.'
+    );
+  };
+
+  const handleDownloadTemplate = () => {
+    const header = 'Nom complet,Email,Role\r\n';
+    const body = PRESET_ROSTER.map(
+      (u) => `${u.name},${u.email},${roleLabels[u.role][lang]}`
+    ).join('\r\n');
+    const blob = new Blob([`\uFEFF${header}${body}`], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'connecteo-import-utilisateurs.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 512 * 1024) {
+      onToast(
+        lang === 'fr'
+          ? 'Fichier trop volumineux (maximum 512 Ko).'
+          : 'File is too large (maximum 512 KB).'
+      );
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      const parsed = parseUsersFileText(text);
+      if (parsed.length === 0) {
+        onToast(
+          lang === 'fr'
+            ? 'Aucune ligne valide détectée. Format attendu : Nom,Email,Rôle.'
+            : 'No valid rows found. Expected format: Name,Email,Role.'
+        );
+        return;
+      }
+      setImportRows(parsed);
+      setImportSummary(null);
+      onToast(
+        lang === 'fr'
+          ? `${parsed.length} utilisateur(s) détecté(s) dans le fichier.`
+          : `${parsed.length} user(s) parsed from file.`
+      );
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const handleBulkImportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const selected = importRows
+      .filter((r) => r.selected)
+      .map(({ name: uName, email: uEmail, role: uRole, password: uPass }) => ({
+        name: uName,
+        email: uEmail,
+        role: uRole,
+        password: uPass,
+      }));
+    if (selected.length === 0) {
+      onToast(
+        lang === 'fr'
+          ? 'Sélectionnez au moins un utilisateur à importer.'
+          : 'Select at least one user to import.'
+      );
+      return;
+    }
+    const missingPassword = selected.some(
+      (u) => (!u.password || u.password.length < 6) && defaultImportPassword.length < 6
+    );
+    if (missingPassword) {
+      onToast(
+        lang === 'fr'
+          ? 'Renseignez un mot de passe initial commun d’au moins 6 caractères.'
+          : 'Enter a shared initial password of at least 6 characters.'
+      );
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const result = await bulkImportUsersApi(token, {
+        users: selected,
+        defaultPassword: defaultImportPassword,
+      });
+      setImportSummary(result);
+      onToast(
+        lang === 'fr'
+          ? `Import terminé : ${result.importedCount} ajouté(s), ${result.skippedCount} déjà existant(s).`
+          : `Import completed: ${result.importedCount} added, ${result.skippedCount} skipped.`
+      );
+      await onRefresh();
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : 'Erreur import.');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -593,6 +794,194 @@ export const SettingsView: React.FC<SecondaryViewProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Bulk import by file + Pre-established roster */}
+          <div className="pt-5 border-t border-[#e5ecee] space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-[#087d7a]" />
+                  <h3 className="text-sm font-bold text-[#172b36]">
+                    {t(lang, 'bulkImportTitle')}
+                  </h3>
+                </div>
+                <p className="text-xs text-[#64767e] mt-1">{t(lang, 'bulkImportDesc')}</p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleLoadPresetRoster}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#b7e4e0] bg-[#effaf8] hover:bg-[#e1f5f2] text-xs font-bold text-[#087d7a] whitespace-nowrap"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  {t(lang, 'loadPresetRoster')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadTemplate}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#dce6e8] bg-white hover:bg-[#f6f9fa] text-xs font-bold text-[#172b36] whitespace-nowrap"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {t(lang, 'downloadCsvTemplate')}
+                </button>
+                <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#172b36] hover:bg-[#233f4e] text-white text-xs font-bold cursor-pointer whitespace-nowrap">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{t(lang, 'uploadCsvFile')}</span>
+                  <input
+                    type="file"
+                    accept=".csv,.txt,text/csv,text/plain"
+                    className="sr-only"
+                    onChange={(e) => {
+                      handleImportFile(e.target.files?.[0]);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {importRows.length > 0 && (
+              <form onSubmit={handleBulkImportSubmit} className="space-y-3">
+                <div className="overflow-x-auto border border-[#e5ecee] rounded-xl">
+                  <table className="w-full text-left border-collapse whitespace-nowrap">
+                    <thead>
+                      <tr className="bg-[#f6f9fa] border-b border-[#e5ecee] text-[10px] font-bold tracking-wider text-[#91a0a6]">
+                        <th className="py-2 px-3 w-10">
+                          <input
+                            type="checkbox"
+                            checked={importRows.every((r) => r.selected)}
+                            onChange={(e) =>
+                              setImportRows((prev) =>
+                                prev.map((r) => ({ ...r, selected: e.target.checked }))
+                              )
+                            }
+                            aria-label="Tout sélectionner"
+                            className="accent-[#00afa9]"
+                          />
+                        </th>
+                        <th className="py-2 px-3">{t(lang, 'nameLabel')}</th>
+                        <th className="py-2 px-3">{t(lang, 'emailLabel')}</th>
+                        <th className="py-2 px-3">{t(lang, 'roleLabel')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#f0f3f4] text-xs">
+                      {importRows.map((row, idx) => (
+                        <tr key={`${row.email}-${idx}`}>
+                          <td className="py-2 px-3">
+                            <input
+                              type="checkbox"
+                              checked={row.selected}
+                              onChange={(e) =>
+                                setImportRows((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx ? { ...item, selected: e.target.checked } : item
+                                  )
+                                )
+                              }
+                              className="accent-[#00afa9]"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="text"
+                              value={row.name}
+                              onChange={(e) =>
+                                setImportRows((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx ? { ...item, name: e.target.value } : item
+                                  )
+                                )
+                              }
+                              className="px-2 py-1 text-xs bg-[#f6f9fa] border border-[#e5ecee] rounded-md w-44"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="email"
+                              value={row.email}
+                              onChange={(e) =>
+                                setImportRows((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx ? { ...item, email: e.target.value } : item
+                                  )
+                                )
+                              }
+                              className="px-2 py-1 text-xs bg-[#f6f9fa] border border-[#e5ecee] rounded-md w-56"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <select
+                              value={row.role}
+                              onChange={(e) =>
+                                setImportRows((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx
+                                      ? { ...item, role: e.target.value as Role }
+                                      : item
+                                  )
+                                )
+                              }
+                              className="px-2 py-1 text-xs bg-white border border-[#e5ecee] rounded-md"
+                            >
+                              {(Object.keys(roleLabels) as Role[]).map((r) => (
+                                <option key={r} value={r}>
+                                  {roleLabels[r][lang]}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[#f6f9fa] border border-[#e5ecee]">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
+                    <label className="text-xs font-bold text-[#172b36] whitespace-nowrap">
+                      {t(lang, 'defaultImportPassword')}
+                    </label>
+                    <input
+                      type="password"
+                      minLength={6}
+                      value={defaultImportPassword}
+                      onChange={(e) => setDefaultImportPassword(e.target.value)}
+                      placeholder="••••••"
+                      className="px-3 py-1.5 text-xs bg-white border border-[#e5ecee] rounded-lg w-full sm:w-52"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImportRows([]);
+                        setImportSummary(null);
+                      }}
+                      className="px-3 py-2 rounded-lg border border-[#dce6e8] bg-white text-xs font-bold text-[#53666f]"
+                    >
+                      {t(lang, 'cancel')}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={importing}
+                      className="px-4 py-2 rounded-lg bg-[#00afa9] hover:bg-[#087d7a] text-white text-xs font-bold whitespace-nowrap disabled:opacity-60"
+                    >
+                      {importing ? '...' : t(lang, 'confirmBulkImport')}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {importSummary && (
+              <div className="p-3 rounded-lg bg-[#effaf8] border border-[#b7e4e0] text-xs text-[#087d7a] font-semibold">
+                {lang === 'fr'
+                  ? `Résultat : ${importSummary.importedCount} utilisateur(s) importé(s), ${importSummary.skippedCount} doublon(s) ignoré(s).`
+                  : `Result: ${importSummary.importedCount} user(s) imported, ${importSummary.skippedCount} duplicate(s) skipped.`}
+              </div>
+            )}
           </div>
         </div>
       )}

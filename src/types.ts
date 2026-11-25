@@ -12,9 +12,21 @@ export type ViewId =
 
 export type AssignmentStatus = 'inProgress' | 'completed' | 'late';
 
+export type InteractiveBlockType = 'narrative' | 'flashcards' | 'steps';
+
 export interface BilingualText {
   fr: string;
   en: string;
+}
+
+export interface FlashcardItem {
+  front: BilingualText;
+  back: BilingualText;
+}
+
+export interface ProcessStepItem {
+  title: BilingualText;
+  detail: BilingualText;
 }
 
 export interface QuizQuestion {
@@ -30,6 +42,11 @@ export interface CourseLevel {
   summary: BilingualText;
   scenario: BilingualText;
   durationMinutes: number;
+  imageUrl?: string;
+  blockType?: InteractiveBlockType;
+  takeaway?: BilingualText;
+  flashcards?: FlashcardItem[];
+  steps?: ProcessStepItem[];
   quiz: QuizQuestion[];
 }
 
@@ -42,10 +59,36 @@ export interface Course {
   skillId: string;
   imageUrl: string;
   accentTheme: 'teal' | 'blue' | 'orange';
+  formatLabel?: string;
   levels: CourseLevel[];
   userProgress: number;
   completedLevels: number[];
   lastScore: number | null;
+}
+
+export interface CreateCourseModuleInput {
+  title: string;
+  summary: string;
+  scenario: string;
+  imageUrl?: string;
+  blockType: InteractiveBlockType;
+  takeaway?: string;
+  flashcards?: Array<{ front: string; back: string }>;
+  steps?: Array<{ title: string; detail: string }>;
+  quizQuestion?: string;
+  quizOptions?: string[];
+  correctIndex?: number;
+}
+
+export interface CreateCoursePayload {
+  titleFr: string;
+  titleEn: string;
+  categoryFr: string;
+  duration: string;
+  skillId: string;
+  imageUrl?: string;
+  formatLabel?: string;
+  modules: CreateCourseModuleInput[];
 }
 
 export interface Assignment {
@@ -87,6 +130,19 @@ export interface UserProfile {
   initials: string;
   role: Role;
   title: BilingualText;
+}
+
+export interface BulkImportUserRow {
+  name: string;
+  email: string;
+  role: Role;
+  password?: string;
+}
+
+export interface BulkImportResult {
+  importedCount: number;
+  skippedCount: number;
+  errors: string[];
 }
 
 export interface MonthlyPoint {
